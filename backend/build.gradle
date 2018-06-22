@@ -1,0 +1,108 @@
+buildscript {
+  repositories {
+    jcenter()
+  }
+  dependencies {
+    classpath "io.ratpack:ratpack-gradle:$RATPACK_PLUGIN"
+    classpath "com.github.jengelman.gradle.plugins:shadow:$SHADOW_PLUGIN"
+    classpath "com.github.ben-manes:gradle-versions-plugin:$VERSIONS_PLUGIN"
+    classpath "com.moowork.gradle:gradle-node-plugin:$NODE_PLUGIN"
+  }
+}
+
+apply plugin: "io.ratpack.ratpack-groovy"
+apply plugin: "com.github.johnrengelman.shadow"
+apply plugin: 'com.github.ben-manes.versions'
+apply plugin: 'com.moowork.node'
+
+group 'org.aklein'
+version '1.0-SNAPSHOT'
+
+sourceCompatibility = 1.8
+
+repositories {
+  jcenter()
+}
+
+dependencies {
+  // Default SLF4J binding.  Note that this is a blocking implementation.
+  // See here for a non blocking appender http://logging.apache.org/log4j/2.x/manual/async.html
+  runtime "org.slf4j:slf4j-simple:$SLF4J"
+  compile "com.google.cloud:google-cloud-datastore:$GCD"
+
+  compile ratpack.dependency("session")
+  compile ratpack.dependency("pac4j")
+  compile "org.codehaus.groovy:groovy-all:$GROOVY"
+  compile "org.pac4j:pac4j-oauth:$PAC4J"
+  compile "org.pac4j:pac4j-http:$PAC4J"
+  compile "commons-codec:commons-codec:$CODEC"
+  compile "org.ehcache:ehcache:$EHCACHE"
+
+  testCompile ratpack.dependency('test')
+  testCompile "org.spockframework:spock-core:$SPOCK"
+  testCompile "org.hamcrest:hamcrest-core:$HAMCREST" // only necessary if Hamcrest matchers are used
+  testRuntime "net.bytebuddy:byte-buddy:$BYTEBUDDY" // allows mocking of classes (in addition to interfaces)
+  testRuntime "org.objenesis:objenesis:$OBJENESIS"  // allows mocking of classes without default constructor (together with CGLIB)
+  testCompile("org.gebish:geb-spock:$GEB") {
+    exclude group: "org.codehaus.groovy", module: "groovy-all"
+  }
+  testCompile "org.seleniumhq.selenium:selenium-chrome-driver:$SELENIUM"
+  testCompile "org.seleniumhq.selenium:selenium-firefox-driver:$SELENIUM"
+  testCompile("io.github.bonigarcia:webdrivermanager:$WEBDRIVERMANAGER") {
+    exclude group: 'org.seleniumhq.selenium'
+  }
+}
+
+node {
+  // Version of node to use.
+  version = '9.11.1'
+
+  // Version of npm to use.
+  npmVersion = '6.1.0'
+
+  // Download node using the versions above.
+  download = true
+
+  // Directory for unpacking node
+  workDir = file("${project.buildDir}/nodejs")
+
+  // Location of package.json and where node_modules will be stored
+  nodeModulesDir = file("${project.projectDir}/..")
+}
+
+task testJs(type: NpmTask, dependsOn: 'npmInstall') {
+  inputs.dir('${project.projectDir}/../test/unit')
+  outputs.dir('${project.projectDir}/../test/reports')
+  args = ['run', 'test']
+  mustRunAfter tasks.test
+}
+check.dependsOn('testJs')
+
+task assembleJs(type: NpmTask, dependsOn: 'npmInstall') {
+  inputs.files fileTree("${project.projectDir}/..").matching {
+    exclude "**/backend"
+    exclude "**/node_modules"
+    exclude "**/build"
+    exclude "**/.idea"
+    exclude "**/build"
+    exclude "src/ratpack/static/assets"
+    exclude "src/ratpack/static/assets/index.html"
+    exclude "yarn.lock"
+    exclude ".*"
+  }
+
+  outputs.dir('src/ratpack/static/assets')
+  outputs.file('src/ratpack/static/index.html')
+  args = ['run', 'build']
+}
+shadowJar.dependsOn('assembleJs')
+
+task testBrowser(type: Test, dependsOn: 'assembleJs') {
+  include '**/*GebSpec*'
+
+  // Pass system properties through to the testBrowser task so we can pass in the 'geb.env' property to run tests
+  // in different browsers. Adapted from http://mrhaki.blogspot.com/2015/09/grails-goodness-passing-system.html
+  systemProperties System.properties
+  mustRunAfter tasks.testJs
+}
+check.dependsOn('testBrowser')
