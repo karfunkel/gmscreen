@@ -3,12 +3,14 @@ package ratpack
 import com.google.auth.oauth2.GoogleCredentials
 import com.google.cloud.datastore.Datastore
 import com.google.cloud.datastore.DatastoreOptions
+import groovy.json.JsonSlurper
 import org.aklein.rpgscreen.GCD
+import org.aklein.rpgscreen.GCDEntityMapper
 import org.aklein.rpgscreen.config.GoogleConfig
 import org.aklein.rpgscreen.handler.AdminUserChain
 import org.aklein.rpgscreen.handler.PrivateEntryChain
 import org.aklein.rpgscreen.handler.PublicEntryChain
-import org.pac4j.oauth.client.Google2Client
+import org.aklein.rpgscreen.security.Google2ClientFactory
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ratpack.pac4j.RatpackPac4j
@@ -32,6 +34,8 @@ ratpack {
     bind AdminUserChain
     bind PrivateEntryChain
     bind PublicEntryChain
+    bindInstance(GCDEntityMapper, new GCDEntityMapper())
+    bindInstance(JsonSlurper, new JsonSlurper())
 
     Datastore datastore
     GoogleConfig google = getServerConfig().getAsConfigObject('/google', GoogleConfig).object
@@ -44,36 +48,32 @@ ratpack {
       datastore = options.service
     }
     bindInstance Datastore, datastore
+    bindInstance(Google2ClientFactory, new Google2ClientFactory())
 
     bind GCD
   }
 
-  handlers { GoogleConfig google ->
-    all(
-      RatpackPac4j.authenticator(
-        new Google2Client(google.key, google.secret)
+  handlers { GoogleConfig google, Google2ClientFactory google2ClientFactory ->
+    prefix('api') {
+      all(
+        RatpackPac4j.authenticator( google2ClientFactory.create(google) )
       )
-    )
-
-    prefix("admin") {
-      prefix("user", AdminUserChain)
-    }
-
-    prefix(":game") {
-      prefix("public", PublicEntryChain)
-      prefix("private", PrivateEntryChain)
-    }
-
-    get() {
-      render "Load view"
-    }
-
-    get("logout") {
-      RatpackPac4j.logout(context).then {
-        redirect "/"
+      prefix("admin") {
+        prefix("user", AdminUserChain)
       }
-    }
 
-    files { dir "static" indexFiles "index.html" }
+      prefix(":game") {
+        prefix("public", PublicEntryChain)
+        prefix("private", PrivateEntryChain)
+      }
+
+      get("logout") {
+        RatpackPac4j.logout(context).then {
+          redirect "/"
+        }
+      }
+
+      files { dir "static" indexFiles "index.html" }
+    }
   }
 }

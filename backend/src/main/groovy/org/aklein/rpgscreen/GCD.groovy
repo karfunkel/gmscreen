@@ -7,20 +7,17 @@ import org.aklein.rpgscreen.entities.Base
 import ratpack.exec.Blocking
 import ratpack.exec.Promise
 
-class $_$ {}
-
 class GCD {
+  @Lazy
+  private GCDAsync ASYNC = { new GCDAsync(gcd: this) }()
   @Inject
   GoogleConfig google
   @Inject
   Datastore datastore
+  @Inject
+  GCDEntityMapper gem
 
-  protected
-  final Map<String, KeyFactory> keyFactories = [:].withDefault { kind -> datastore.newKeyFactory().setKind(kind) }
-
-  protected List<String> generatedFields = $_$.declaredFields*.name
-
-  private final static List<Class<?>> WRAPPERS = [Boolean, Character, Byte, Short, Integer, Long, Float, Double, Void]
+  final Map<String, KeyFactory> keyFactories = [:].withDefault { kind -> datastore.newKeyFactory().setKind(kind.toString()) }
 
   protected Key key(String urlSafe) {
     Key.fromUrlSafe(urlSafe)
@@ -32,35 +29,6 @@ class GCD {
 
   protected Key key(String kind, long id) {
     Key.newBuilder(google.projectId, kind, id).build()
-  }
-
-  protected List<String> entityFields(Class<? extends Base> type) {
-    return (type.declaredFields*.name - generatedFields - ['entity', 'id']).findAll {
-      !it.startsWith('this$')
-    }
-  }
-
-  protected Entity toEntity(Key key = null, Class<? extends Base> type, Base instance) {
-    String entity = instance.kind
-    long id = instance.id
-    Key newKey = key ?: Key.newBuilder(google.projectId, entity, id).build()
-    Entity.Builder builder = Entity.newBuilder(newKey)
-    entityFields(type).each { name ->
-      builder.set(name, instance."$name")
-    }
-    return builder.build()
-  }
-
-  protected <T extends Base> T fromEntity(Class<T> type, Entity entity) {
-    Base instance = type.newInstance()
-    if (instance.kind != entity.key.kind) {
-      throw new IllegalArgumentException("Type $type.canonicalName does not fit entity kind $entity.key.kind")
-    }
-    instance.id = entity.key.id
-    entityFields(type).each { name ->
-      instance."$name" = entity.getValue(name).get
-    }
-    return instance
   }
 
   protected def withTransaction(Closure action) {
@@ -96,12 +64,12 @@ class GCD {
     return datastore.get(ids.collect { key(kind, it) })
   }
 
-  List<Entity> list(String _kind) {
+  List<Entity> list(Class<? extends Base> type) {
     QueryResults<Entity> results = query {
-      kind = _kind
+      kind = gem.kind(type)
     }
     if (results) {
-      List<Entity> entities = results.toList()
+      List<Entity> entities = results.collect{ gem.fromEntity(it) }
       return entities
     } else {
       return []
@@ -111,22 +79,20 @@ class GCD {
   long create(Base entity) {
     KeyFactory keyFactory = keyFactories[entity.kind]
     Key key = datastore.allocateId(keyFactory.newKey())
-    datastore.add(toEntity(key, (Class<? extends Base>) entity.getClass(), entity))
+    datastore.add(gem.toEntity(key, (Class<? extends Base>) entity.getClass(), entity))
     return key.id
   }
 
   public <T extends Base> T show(Class<T> type, long id) {
-    String kind = type.newInstance().kind
-    return fromEntity(type, get(kind, id))
+    return gem.fromEntity(get(gem.kind(type), id))
   }
 
   public <T extends Base> List<T> show(Class<T> type, Long... ids) {
-    String kind = type.newInstance().kind
-    return get(kind, ids).collect { fromEntity(type, it) }
+    return get(gem.kind(type), ids).collect { gem.fromEntity(it) }
   }
 
   void replace(Base entity) {
-    datastore.put(toEntity((Class<? extends Base>) entity.getClass(), entity))
+    datastore.put(gem.toEntity((Class<? extends Base>) entity.getClass(), entity))
   }
 
   void delete(Base entity) {
@@ -134,37 +100,21 @@ class GCD {
   }
 
   void delete(Class<? extends Base> type, long id) {
-    String kind = type.newInstance().kind
-    datastore.delete(key(kind, id))
-  }
-
-  private isPrimitiveOrWrapper(Class<?> type) {
-    return type.primitive ?: WRAPPERS.contains(type)
+    datastore.delete(key(gem.kind(type), id))
   }
 
   boolean update(long id, Base template) {
     KeyFactory keyFactory = keyFactories[template.kind]
     withTransaction { Transaction transaction ->
       Entity e = transaction.get(keyFactory.newKey(id))
-      if (e != null) {
-        Entity.Builder builder = Entity.newBuilder(e)
-        entityFields((Class<? extends Base>) template.getClass()).each { name ->
-          MetaProperty mp = template.metaClass.getMetaProperty(name)
-          def value = mp.getProperty(template)
-          if (isPrimitiveOrWrapper(mp.type)) {
-            if (value)
-              builder.set(name, template."$name")
-          } else if (value != null)
-            builder.set(name, template."$name")
-        }
-        transaction.put(builder.build())
-      }
-      return e != null
+      if (e)
+        transaction.put(gem.updateEntity(e, template))
+      return e
     }
   }
 
   GCDAsync async() {
-    return new GCDAsync(gcd: this)
+    return ASYNC
   }
 
   class GCDAsync {
@@ -183,7 +133,7 @@ class GCD {
       }
     }
 
-    Promise<List<Entity>> list(String entity) {
+    Promise<List<Entity>> list(Class<? extends Base> entity) {
       Blocking.get {
         return gcd.list(entity)
       }

@@ -37,6 +37,7 @@ dependencies {
   compile "org.pac4j:pac4j-http:$PAC4J"
   compile "commons-codec:commons-codec:$CODEC"
   compile "org.ehcache:ehcache:$EHCACHE"
+  compile "org.reflections:reflections:$REFLECTIONS"
 
   testCompile ratpack.dependency('test')
   testCompile "org.spockframework:spock-core:$SPOCK"
@@ -50,6 +51,12 @@ dependencies {
   testCompile "org.seleniumhq.selenium:selenium-firefox-driver:$SELENIUM"
   testCompile("io.github.bonigarcia:webdrivermanager:$WEBDRIVERMANAGER") {
     exclude group: 'org.seleniumhq.selenium'
+  }
+}
+
+test {
+  testLogging {
+    events 'started', 'passed'
   }
 }
 
